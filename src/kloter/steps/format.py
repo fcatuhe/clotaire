@@ -182,17 +182,14 @@ def _fmt_time(seconds: float) -> str:
 
 
 def _fmt_time_fw(seconds: float) -> str:
-    """Format seconds as fixed-width MMM:SS (padded with spaces).
-
-    Supports up to 999:99 (16h39m39s).
+    """Format seconds as M:SS.
 
     Examples:
-        0.0   → '  0:00'
-        5.3   → '  0:05'
-        63.7  → '  1:03'
-        3600  → ' 60:00'
-        59999 → '999:99'
+        0.0   → '0:00'
+        5.3   → '0:05'
+        63.7  → '1:03'
+        3600  → '60:00'
     """
     total_seconds = int(seconds)
     m, s = divmod(total_seconds, 60)
-    return f"{m:>3d}:{s:02d}"
+    return f"{m}:{s:02d}"
