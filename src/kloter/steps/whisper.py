@@ -97,6 +97,9 @@ def transcribe_segments(
                 "words": words,
             })
 
+    # Majority language vote: override minority languages on short segments
+    results = _apply_language_vote(results)
+
     return results
 
 
@@ -272,3 +275,50 @@ def _extract_tokens(whisper_output: dict[str, Any]) -> list[dict[str, Any]]:
             })
 
     return tokens
+
+
+def _apply_language_vote(
+    segments: list[dict[str, Any]],
+    min_segment_duration: float = 3.0,
+) -> list[dict[str, Any]]:
+    """Override minority languages on short segments via majority vote.
+
+    Whisper.cpp can misidentify language on short segments (<3s) because
+    there isn't enough audio context. This function:
+    1. Finds the majority language (by total speech duration)
+    2. For short segments with a minority language, overrides to the majority
+
+    Long segments keep their detected language — they have enough context
+    to be reliable, and might genuinely be code-switching.
+
+    Args:
+        segments: Output from transcribe_segments.
+        min_segment_duration: Segments shorter than this (seconds) get
+            their language overridden if it's a minority language.
+
+    Returns:
+        Same segments with language possibly overridden.
+    """
+    from collections import defaultdict
+
+    if not segments:
+        return segments
+
+    # Compute language durations
+    lang_duration: dict[str, float] = defaultdict(float)
+    for seg in segments:
+        lang_duration[seg["language"]] += seg["end"] - seg["start"]
+
+    # Find majority language
+    if not lang_duration:
+        return segments
+    majority_lang = max(lang_duration, key=lambda k: lang_duration[k])
+
+    # Override minority languages on short segments
+    for seg in segments:
+        seg_duration = seg["end"] - seg["start"]
+        if seg_duration < min_segment_duration and seg["language"] != majority_lang:
+            seg["language_original"] = seg["language"]
+            seg["language"] = majority_lang
+
+    return segments

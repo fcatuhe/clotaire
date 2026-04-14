@@ -28,8 +28,8 @@ def detect_speech(audio: np.ndarray, hf_token: str | None = None) -> list[dict[s
 
     vad = VoiceActivityDetection(segmentation=segmentation_model)
     vad.instantiate({
-        "min_duration_on": 0.100,
-        "min_duration_off": 0.100,
+        "min_duration_on": 0.1,
+        "min_duration_off": 1.0,
     })
 
     audio_data = {
