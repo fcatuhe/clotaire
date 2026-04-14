@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kloter"
+version = "0.1.0"
+description = "Multilingual audio transcription with speaker diarization"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+readme = "README.md"
+
+dependencies = [
+    "torch",
+    "torchaudio",
+    "pyannote.audio",
+    "whisperx",
+    "numpy",
+    "python-dotenv>=1.2.2",
+    "huggingface-hub",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[project.scripts]
+kloter = "kloter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

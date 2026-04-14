@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Ruff
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# Models (large, downloaded at runtime)
+*.bin
+*.pt
+*.ckpt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+.samples/
