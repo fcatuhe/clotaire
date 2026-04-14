@@ -56,6 +56,14 @@ def format_output(
 def to_markdown(result: dict[str, Any]) -> str:
     """Convert result dict to human-readable Markdown.
 
+    Segments are in chronological order (not grouped by speaker),
+    showing the conversation flow with alternating speakers.
+
+    Format per line:
+        [  0:00 -   0:02] SPEAKER_01:  text here
+
+    Time is fixed-width: [MMM:SS - MMM:SS] padded to 999:99.
+
     Args:
         result: Output from format_output.
 
@@ -77,22 +85,14 @@ def to_markdown(result: dict[str, Any]) -> str:
     lines.append("---")
     lines.append("")
 
-    # Group segments by speaker
-    by_speaker: dict[str, list[dict[str, Any]]] = {}
+    # Segments in chronological order
     for seg in result["segments"]:
-        spk = seg["speaker"]
-        by_speaker.setdefault(spk, []).append(seg)
-
-    for speaker, segs in sorted(by_speaker.items()):
-        start = _fmt_time(segs[0]["start"])
-        end = _fmt_time(segs[-1]["end"])
-        lines.append(f"## {speaker}")
+        time_range = f"[{_fmt_time_fw(seg['start'])} - {_fmt_time_fw(seg['end'])}]"
+        speaker = seg["speaker"]
+        text = seg["text"]
+        lines.append(f"{time_range} {speaker}")
+        lines.append(text)
         lines.append("")
-        lines.append(f"**[{start}–{end}]**")
-        lines.append("")
-        for seg in segs:
-            lines.append(seg["text"])
-            lines.append("")
 
     lines.append("---")
     lines.append("")
@@ -175,9 +175,26 @@ def _build_segments(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fmt_time(seconds: float) -> str:
-    """Format seconds as M:SS or H:MM:SS."""
+    """Format seconds as M:SS or H:MM:SS (compact)."""
     m, s = divmod(int(seconds), 60)
     h, m = divmod(m, 60)
     if h:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
+
+
+def _fmt_time_fw(seconds: float) -> str:
+    """Format seconds as fixed-width MMM:SS (padded with spaces).
+
+    Supports up to 999:99 (16h39m39s).
+
+    Examples:
+        0.0   → '  0:00'
+        5.3   → '  0:05'
+        63.7  → '  1:03'
+        3600  → ' 60:00'
+        59999 → '999:99'
+    """
+    total_seconds = int(seconds)
+    m, s = divmod(total_seconds, 60)
+    return f"{m:>3d}:{s:02d}"
