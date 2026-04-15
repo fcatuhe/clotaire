@@ -152,19 +152,8 @@ def _build_step(
     return {
         "step": "01_convert",
         "description": "Audio extraction and conversion: any format → 16kHz mono PCM",
-        "downstream_requirements": _build_downstream_requirements(),
         "original": _build_file_entry(media_path, original_probe),
         "converted": _build_file_entry(wav_path, converted_probe),
-    }
-
-
-def _build_downstream_requirements() -> dict[str, str]:
-    """Document what each downstream tool requires from the conversion."""
-    return {
-        "whisper_cpp": "WAV file, pcm_s16le",
-        "pyannote_vad": "float32 tensor, 16kHz mono, [-1,1]",
-        "pyannote_diarization": "float32 tensor, 16kHz mono, [-1,1]",
-        "wav2vec2_alignment": "float32 numpy, 16kHz mono",
     }
 
 
