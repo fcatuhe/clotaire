@@ -1,4 +1,4 @@
-"""Step 01 — Audio conversion.
+"""Step 01 — Audio extraction and conversion.
 
 Extracts the audio stream from any media file (mp3, mp4, wav, ogg, etc.)
 and converts it to 16kHz mono PCM — the format required by all downstream
@@ -79,11 +79,19 @@ def execute(media_path: Path, writer: StepWriter) -> np.ndarray:
 
 # ── Audio conversion ────────────────────────────────────────────────────────
 
+# WAV header is 44 bytes = 22 int16 samples at 2 bytes each
+_WAV_HEADER_SAMPLES = 22
+
+# PCM int16 range: [-32768, 32767], normalized to [-1.0, 1.0]
+_PCM_MAX = 32768.0
+_PCM_CLIP_MAX = 32767
+
+
 def _load_audio(path: str | Path) -> np.ndarray:
     """Extract audio stream and convert to 16kHz mono float32 numpy array.
 
     ffmpeg: any format → pcm_s16le 16kHz mono (raw bytes, -ac 1 -ar 16000)
-    numpy: int16 → float32 / 32768 to normalize to [-1, 1] for pyannote/wav2vec2.
+    numpy: int16 → float32 / _PCM_MAX to normalize to [-1, 1] for pyannote/wav2vec2.
     """
     result = subprocess.run(
         ["ffmpeg", "-i", str(path), "-f", "wav", "-acodec", "pcm_s16le",
@@ -91,13 +99,13 @@ def _load_audio(path: str | Path) -> np.ndarray:
         capture_output=True,
         check=True,
     )
-    audio = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
-    return audio[22:]  # skip 44-byte WAV header
+    audio = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / _PCM_MAX
+    return audio[_WAV_HEADER_SAMPLES:]
 
 
-def _save_wav(audio: np.ndarray, path: Path) -> Path:
+def _save_wav(audio: np.ndarray, path: Path) -> None:
     """Write the converted audio as a WAV file for whisper-cli."""
-    pcm = (audio * 32768).clip(-32768, 32767).astype(np.int16)
+    pcm = (audio * _PCM_MAX).clip(-_PCM_MAX, _PCM_CLIP_MAX).astype(np.int16)
     subprocess.run(
         ["ffmpeg", "-y", "-f", "s16le", "-ar", "16000", "-ac", "1",
          "-i", "pipe:0", str(path)],
@@ -105,7 +113,6 @@ def _save_wav(audio: np.ndarray, path: Path) -> Path:
         capture_output=True,
         check=True,
     )
-    return path
 
 
 # ── ffprobe ─────────────────────────────────────────────────────────────────
@@ -150,7 +157,7 @@ def _build_step(
     """Assemble the step-01 output dict from probed metadata."""
     return {
         "step": "01_convert",
-        "description": "Audio conversion: any format → 16kHz mono PCM",
+        "description": "Audio extraction and conversion: any format → 16kHz mono PCM",
         "downstream_requirements": _build_downstream_requirements(),
         "original": _build_file_entry(media_path, original_probe),
         "converted": _build_file_entry(wav_path, converted_probe),

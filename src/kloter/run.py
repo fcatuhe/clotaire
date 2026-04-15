@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from sys import stderr
 
 from kloter.steps_io import StepWriter
 from kloter.step_01_convert import execute as step_01
@@ -19,4 +20,4 @@ def run(media_path: Path) -> None:
     print("Step 02: vad …", flush=True)
     step_02(audio, writer)
 
-    print("Done. Steps saved to:", writer._steps_dir, file=__import__("sys").stderr)
+    print("Done. Steps saved to:", writer.steps_dir, file=stderr)

@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
+from sys import stderr
 from typing import Any
 
 
 class StepWriter:
-    """Write numbered step files under <audio_dir>/<audio_stem>/steps/.
+    """Write numbered step files under <media_dir>/<media_stem>/steps/.
 
     Each step file is named like:
-        01_transcript.<stem>.json
+        01_convert.<stem>.json
         02_vad.<stem>.json
     """
 
@@ -20,6 +20,11 @@ class StepWriter:
         self._stem = media_path.stem
         self._steps_dir = media_path.parent / self._stem / "steps"
         self._steps_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def steps_dir(self) -> Path:
+        """Directory where step files are written."""
+        return self._steps_dir
 
     def artifact_path(self, number: int, name: str, suffix: str) -> Path:
         """Return a path for a step artifact (e.g. converted WAV).
@@ -35,5 +40,5 @@ class StepWriter:
             json.dumps(data, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        print(f"  step saved: {path}", file=sys.stderr)
+        print(f"  step saved: {path}", file=stderr)
         return path
