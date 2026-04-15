@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kloter.steps.match import match_speakers, _apply_coherence, _best_speaker
+from clotaire.steps.match import match_speakers, _apply_coherence, _best_speaker
 
 
 class TestMatchSpeakers:

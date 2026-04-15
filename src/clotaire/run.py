@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from sys import stderr
 
-from kloter.steps_io import StepWriter
-from kloter.step_01_convert import execute as step_01
-from kloter.step_02_transcribe import execute as step_02
+from clotaire.steps_io import StepWriter
+from clotaire.step_01_convert import execute as step_01
+from clotaire.step_02_transcribe import execute as step_02
 
 
 def run(media_path: Path) -> None:

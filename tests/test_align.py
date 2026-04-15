@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kloter.steps.align import (
+from clotaire.steps.align import (
     _find_speaker_changes,
     _split_segment,
     _merge_short_subsegments,
@@ -280,7 +280,7 @@ class TestAnchorPunctuation:
 
     def test_question_mark_anchored(self):
         """Standalone '?' snaps to preceding word's end."""
-        from kloter.steps.align import _anchor_punctuation
+        from clotaire.steps.align import _anchor_punctuation
         words = [
             {"start": 1.37, "end": 1.45, "word": "là", "align_score": 0.33},
             {"start": 2.633, "end": 2.653, "word": "?", "align_score": 0.004},
@@ -292,7 +292,7 @@ class TestAnchorPunctuation:
 
     def test_exclamation_anchored(self):
         """Standalone '!' snaps to preceding word's end."""
-        from kloter.steps.align import _anchor_punctuation
+        from clotaire.steps.align import _anchor_punctuation
         words = [
             {"start": 9.79, "end": 9.83, "word": "eh", "align_score": 0.13},
             {"start": 9.85, "end": 9.87, "word": "!", "align_score": 0.005},
@@ -304,7 +304,7 @@ class TestAnchorPunctuation:
 
     def test_word_with_punctuation_not_affected(self):
         """Words that contain letters (like 'Si.', 'Aussi.') are not moved."""
-        from kloter.steps.align import _anchor_punctuation
+        from clotaire.steps.align import _anchor_punctuation
         words = [
             {"start": 0.327, "end": 0.528, "word": "Si.", "align_score": 0.505},
             {"start": 9.108, "end": 9.529, "word": "Aussi.", "align_score": 0.376},
@@ -315,7 +315,7 @@ class TestAnchorPunctuation:
 
     def test_consecutive_punctuation(self):
         """Multiple punctuation in a row all anchor to last real word."""
-        from kloter.steps.align import _anchor_punctuation
+        from clotaire.steps.align import _anchor_punctuation
         words = [
             {"start": 1.0, "end": 1.5, "word": "quoi", "align_score": 0.5},
             {"start": 3.0, "end": 3.1, "word": ",", "align_score": 0.01},
@@ -327,7 +327,7 @@ class TestAnchorPunctuation:
 
     def test_no_preceding_word(self):
         """Punctuation as first word stays where it is."""
-        from kloter.steps.align import _anchor_punctuation
+        from clotaire.steps.align import _anchor_punctuation
         words = [
             {"start": 0.0, "end": 0.1, "word": "...", "align_score": 0.1},
             {"start": 0.1, "end": 0.5, "word": "Bonjour", "align_score": 0.8},

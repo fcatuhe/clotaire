@@ -1,4 +1,4 @@
-"""Shared test fixtures for kloter."""
+"""Shared test fixtures for clotaire."""
 
 from __future__ import annotations
 

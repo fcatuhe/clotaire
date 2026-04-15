@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from kloter.steps.format import format_output, to_markdown, write_files
+from clotaire.steps.format import format_output, to_markdown, write_files
 
 
 class TestFormatOutput:
@@ -72,7 +72,7 @@ class TestToMarkdown:
         assert "Languages" in md
         assert "SPEAKER_00" in md
         assert "SPEAKER_01" in md
-        assert "kloter v" in md
+        assert "clotaire v" in md
 
     def test_empty_result(self):
         """Markdown handles empty result gracefully."""

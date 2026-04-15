@@ -7,7 +7,7 @@ import subprocess
 import numpy as np
 import pytest
 
-from kloter.steps.convert import load_audio
+from clotaire.steps.convert import load_audio
 
 
 class TestLoadAudio:

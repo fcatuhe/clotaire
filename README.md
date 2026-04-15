@@ -1,4 +1,4 @@
-# Kloter
+# Clotaire
 
 Step-by-step audio transcription CLI.
 
@@ -11,7 +11,7 @@ uv sync --extra dev
 ## Usage
 
 ```bash
-kloter /path/to/audio.mp3 --trace
+clotaire /path/to/audio.mp3 --trace
 ```
 
 Saves numbered step files under `<audio_dir>/<audio_stem>/steps/`:

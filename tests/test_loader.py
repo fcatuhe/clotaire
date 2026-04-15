@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from kloter.models.loader import clear_cache, _cache
+from clotaire.models.loader import clear_cache, _cache
 
 
 class TestLoaderCache:

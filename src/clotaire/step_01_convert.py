@@ -22,7 +22,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from kloter.steps_io import StepWriter
+from clotaire.steps_io import StepWriter
 
 
 # ── ffprobe schema ──────────────────────────────────────────────────────────

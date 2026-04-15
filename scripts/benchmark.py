@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Benchmark: time and memory profiling for the kloter pipeline."""
+"""Benchmark: time and memory profiling for the clotaire pipeline."""
 
 from __future__ import annotations
 
 import sys
 import time
 import tracemalloc
-from pathlib import Path
 
 
 def main() -> None:
@@ -26,7 +25,7 @@ def main() -> None:
     tracemalloc.start()
     t_start = time.perf_counter()
 
-    from kloter import run
+    from clotaire import run
 
     result = run(audio_path, hf_token=hf_token)
 

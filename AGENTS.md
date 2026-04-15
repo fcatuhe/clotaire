@@ -2,13 +2,13 @@
 
 ## Project overview
 
-**kloter** is a step-by-step audio/video transcription CLI. Each step produces a numbered JSON artifact under `<media_dir>/<media_stem>/steps/`. Steps are independent, re-runnable, and self-documenting.
+**clotaire** is a step-by-step audio/video transcription CLI. Each step produces a numbered JSON artifact under `<media_dir>/<media_stem>/steps/`. Steps are independent, re-runnable, and self-documenting.
 
 ## Running
 
 ```bash
 # Run the full pipeline on a media file
-uv run kloter audio_samples/260331_1031.mp3 --trace
+uv run clotaire audio_samples/260331_1031.mp3 --trace
 
 # Run tests
 uv run pytest
@@ -22,9 +22,9 @@ The project uses `uv` for dependency management. All commands go through `uv run
 ## Project structure
 
 ```
-src/kloter/
+src/clotaire/
   __init__.py          — version
-  __main__.py          — python -m kloter entry
+  __main__.py          — python -m clotaire entry
   cli.py               — argparse CLI (--trace mode)
   run.py               — orchestrator: runs steps sequentially
   steps_io.py          — StepWriter: saves numbered step JSON + artifact paths

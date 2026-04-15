@@ -1,7 +1,7 @@
-"""CLI entry point for kloter.
+"""CLI entry point for clotaire.
 
 Usage:
-    kloter /path/to/media.mp3 --trace
+    clotaire /path/to/media.mp3 --trace
 
 Saves numbered step files under <media_dir>/<media_stem>/steps/
 """
@@ -9,15 +9,14 @@ Saves numbered step files under <media_dir>/<media_stem>/steps/
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-from kloter.run import run
+from clotaire.run import run
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="kloter",
+        prog="clotaire",
         description="Step-by-step media transcription CLI",
     )
     parser.add_argument("media", help="Path to audio or video file")
