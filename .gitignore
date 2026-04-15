@@ -15,9 +15,6 @@ build/
 .venv/
 venv/
 
-# uv
-uv.lock
-
 # Models (large, downloaded at runtime)
 *.bin
 *.pt

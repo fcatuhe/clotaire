@@ -15,7 +15,7 @@ dependencies = [
     "torchaudio",
     "pyannote.audio",
     "numpy",
-    "python-dotenv>=1.2.2",
+    "python-dotenv",
     "huggingface-hub",
 ]
 

@@ -12,7 +12,8 @@ word timings inherited from step 02.
 
 from __future__ import annotations
 
-import json
+import contextlib
+import io
 import time
 import unicodedata
 import wave
@@ -39,30 +40,40 @@ def execute(
     t0 = time.perf_counter()
     waveform, sample_rate = _load_audio(wav_path)
 
-    model_info = _model_info()
-    alignment_debug: list[dict[str, Any]] = []
+    torch_output = io.StringIO()
+    alignment_trace: list[dict[str, Any]] = []
+    wav2vec2_raw_outputs: list[dict[str, Any]] = []
+    with contextlib.redirect_stdout(torch_output), contextlib.redirect_stderr(torch_output):
+        raw_model_info = _raw_model_info()
 
-    transcription = transcription_step.get("transcription", {})
-    voice_ranges = transcription.get("whisper", {}).get("voice_ranges", [])
-    segments = transcription.get("segments", [])
+        transcription = transcription_step.get("transcription", {})
+        voice_ranges = transcription.get("whisper", {}).get("voice_ranges", [])
+        segments = transcription.get("segments", [])
 
-    for voice_range in voice_ranges:
-        range_segments = [seg for seg in segments if seg.get("voice_range_id") == voice_range["id"]]
-        _align_voice_range(voice_range, range_segments, waveform, sample_rate)
-        alignment_debug.append({
-            "voice_range_id": voice_range["id"],
-            "start_ms": voice_range["start_ms"],
-            "end_ms": voice_range["end_ms"],
-            "num_segments": len(range_segments),
-            "segment_ids": [seg["id"] for seg in range_segments],
-        })
+        for voice_range in voice_ranges:
+            range_segments = [seg for seg in segments if seg.get("voice_range_id") == voice_range["id"]]
+            _align_voice_range(
+                voice_range,
+                range_segments,
+                waveform,
+                sample_rate,
+                alignment_trace,
+                wav2vec2_raw_outputs,
+            )
 
-    for segment in segments:
-        if "wav2vec2" not in segment:
-            _apply_fallback(segment, reason="segment_has_no_voice_range", voice_range_id=None)
+        for segment in segments:
+            if "wav2vec2" not in segment:
+                _apply_fallback(segment, reason="segment_has_no_voice_range", voice_range_id=None)
 
     wall_time_s = time.perf_counter() - t0
-    _save_raw_artifacts(writer, model_info, alignment_debug)
+    model_info = _build_model_info(raw_model_info)
+    _save_raw_artifacts(
+        writer,
+        raw_model_info,
+        alignment_trace,
+        wav2vec2_raw_outputs,
+        torch_output.getvalue(),
+    )
 
     step_data = _build_step(
         wav_path=wav_path,
@@ -102,24 +113,46 @@ def _load_aligner() -> dict[str, Any]:
     }
 
 
-def _model_info() -> dict[str, Any]:
-    """Describe the alignment backend, or record why it is unavailable."""
+def _raw_model_info() -> dict[str, Any]:
+    """Collect minimally processed model-load details for raw artifact storage."""
     try:
         aligner = _load_aligner()
     except Exception as exc:  # pragma: no cover - exercised in execute fallback
         return {
-            "name": _ALIGNER_BUNDLE,
-            "type": "ctc-forced-alignment",
             "status": "unavailable",
+            "bundle_name": _ALIGNER_BUNDLE,
             "error": str(exc),
         }
 
+    bundle = aligner["bundle"]
+    model = aligner["model"]
+    tokenizer = aligner["tokenizer"]
+    forced_aligner = aligner["aligner"]
     return {
-        "name": _ALIGNER_BUNDLE,
-        "type": "ctc-forced-alignment",
         "status": "ready",
+        "bundle_name": _ALIGNER_BUNDLE,
+        "bundle_type": type(bundle).__name__,
+        "bundle_module": type(bundle).__module__,
         "sample_rate": aligner["sample_rate"],
-        "labels": list(aligner["bundle"].get_labels(star=None)),
+        "labels": list(bundle.get_labels(star=None)),
+        "bundle_repr": repr(bundle),
+        "model_type": type(model).__name__,
+        "model_module": type(model).__module__,
+        "model_repr": repr(model),
+        "tokenizer_type": type(tokenizer).__name__,
+        "tokenizer_module": type(tokenizer).__module__,
+        "tokenizer_repr": repr(tokenizer),
+        "aligner_type": type(forced_aligner).__name__,
+        "aligner_module": type(forced_aligner).__module__,
+        "aligner_repr": repr(forced_aligner),
+    }
+
+
+def _build_model_info(raw_model_info: dict[str, Any]) -> dict[str, Any]:
+    """Build the minimal step-level model summary."""
+    return {
+        "name": raw_model_info.get("bundle_name", _ALIGNER_BUNDLE),
+        "type": "ctc-forced-alignment",
     }
 
 
@@ -153,9 +186,20 @@ def _align_voice_range(
     segments: list[dict[str, Any]],
     waveform: Any,
     sample_rate: int,
+    alignment_trace: list[dict[str, Any]],
+    wav2vec2_raw_outputs: list[dict[str, Any]],
 ) -> None:
     """Align all segments assigned to one voice range in a single pass."""
     if not segments:
+        alignment_trace.append({
+            "voice_range_id": voice_range["id"],
+            "start_ms": voice_range["start_ms"],
+            "end_ms": voice_range["end_ms"],
+            "num_segments": 0,
+            "segment_ids": [],
+            "status": "skipped",
+            "reason": "voice_range_has_no_segments",
+        })
         return
 
     lexical_items: list[dict[str, Any]] = []
@@ -183,10 +227,22 @@ def _align_voice_range(
     if not lexical_items:
         for segment in segments:
             _apply_fallback(segment, reason="voice_range_has_no_alignable_items", voice_range_id=voice_range["id"])
+        alignment_trace.append({
+            "voice_range_id": voice_range["id"],
+            "start_ms": voice_range["start_ms"],
+            "end_ms": voice_range["end_ms"],
+            "num_segments": len(segments),
+            "segment_ids": [seg["id"] for seg in segments],
+            "status": "fallback",
+            "reason": "voice_range_has_no_alignable_items",
+            "lexical_items": [],
+        })
         return
 
     try:
-        _run_alignment(voice_range, lexical_items, waveform, sample_rate)
+        trace_entry, raw_output = _run_alignment(voice_range, lexical_items, waveform, sample_rate)
+        alignment_trace.append(trace_entry)
+        wav2vec2_raw_outputs.append(raw_output)
         for segment in segments:
             _anchor_segment_punctuation(segment)
             segment["wav2vec2"] = _build_segment_wav2vec2(
@@ -194,7 +250,26 @@ def _align_voice_range(
                 status="aligned",
                 voice_range_id=voice_range["id"],
             )
+            _promote_alignment_timings(segment)
     except Exception as exc:
+        alignment_trace.append({
+            "voice_range_id": voice_range["id"],
+            "start_ms": voice_range["start_ms"],
+            "end_ms": voice_range["end_ms"],
+            "num_segments": len(segments),
+            "segment_ids": [seg["id"] for seg in segments],
+            "status": "fallback",
+            "reason": str(exc),
+            "lexical_items": [
+                {
+                    "segment_id": entry["segment"]["id"],
+                    "item_id": entry["item"]["id"],
+                    "text": entry["item"]["text"],
+                    "normalized": entry["normalized"],
+                }
+                for entry in lexical_items
+            ],
+        })
         for segment in segments:
             _apply_fallback(segment, reason=str(exc), voice_range_id=voice_range["id"])
 
@@ -204,7 +279,7 @@ def _run_alignment(
     lexical_items: list[dict[str, Any]],
     waveform: Any,
     sample_rate: int,
-) -> None:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run wav2vec2 forced alignment for one voice range."""
     aligner = _load_aligner()
     audio_slice, slice_start_ms, slice_end_ms = _slice_audio(
@@ -220,14 +295,73 @@ def _run_alignment(
         audio_slice = torchaudio.functional.resample(audio_slice, sample_rate, aligner["sample_rate"])
 
     emission, _ = aligner["model"](audio_slice)
-    spans_per_word = aligner["aligner"](
-        emission[0],
-        aligner["tokenizer"]([entry["normalized"] for entry in lexical_items]),
-    )
+    tokenized_targets = aligner["tokenizer"]([entry["normalized"] for entry in lexical_items])
+    spans_per_word = aligner["aligner"](emission[0], tokenized_targets)
+
+    trace_entry = {
+        "voice_range_id": voice_range["id"],
+        "start_ms": voice_range["start_ms"],
+        "end_ms": voice_range["end_ms"],
+        "status": "aligned",
+        "slice": {
+            "start_ms": slice_start_ms,
+            "end_ms": slice_end_ms,
+            "input_sample_rate": sample_rate,
+            "model_sample_rate": aligner["sample_rate"],
+            "resampled": sample_rate != aligner["sample_rate"],
+        },
+        "emission_shape": list(emission.shape),
+        "num_frames": emission.shape[1],
+        "tokenized_targets": [list(tokens) for tokens in tokenized_targets],
+        "lexical_items": [],
+    }
+    raw_output = {
+        "voice_range_id": voice_range["id"],
+        "metadata": {
+            "voice_range_id": voice_range["id"],
+            "start_ms": voice_range["start_ms"],
+            "end_ms": voice_range["end_ms"],
+            "slice_start_ms": slice_start_ms,
+            "slice_end_ms": slice_end_ms,
+            "input_sample_rate": sample_rate,
+            "model_sample_rate": aligner["sample_rate"],
+            "resampled": sample_rate != aligner["sample_rate"],
+            "lexical_items": [
+                {
+                    "segment_id": entry["segment"]["id"],
+                    "item_id": entry["item"]["id"],
+                    "text": entry["item"]["text"],
+                    "normalized": entry["normalized"],
+                }
+                for entry in lexical_items
+            ],
+            "tokenized_targets": [list(tokens) for tokens in tokenized_targets],
+        },
+        "emission": emission.detach().cpu(),
+        "spans_per_word": spans_per_word,
+    }
 
     ms_per_frame = (slice_end_ms - slice_start_ms) / max(emission.shape[1], 1)
     for entry, spans in zip(lexical_items, spans_per_word):
         item = entry["item"]
+        trace_word = {
+            "segment_id": entry["segment"]["id"],
+            "item_id": item["id"],
+            "text": item["text"],
+            "normalized": entry["normalized"],
+            "whisper": {
+                "start_ms": item["whisper"]["start_ms"],
+                "end_ms": item["whisper"]["end_ms"],
+            },
+            "spans": [
+                {
+                    "start": span.start,
+                    "end": span.end,
+                    "score": round(float(span.score), 6),
+                }
+                for span in spans
+            ],
+        }
         if not spans:
             item["wav2vec2"] = {
                 "start_ms": item["whisper"]["start_ms"],
@@ -235,6 +369,9 @@ def _run_alignment(
                 "status": "fallback",
                 "fallback_reason": "unaligned_word",
             }
+            trace_word["status"] = "fallback"
+            trace_word["fallback_reason"] = "unaligned_word"
+            trace_entry["lexical_items"].append(trace_word)
             continue
         start_frame = spans[0].start
         end_frame = spans[-1].end
@@ -245,6 +382,11 @@ def _run_alignment(
             "normalized_text": entry["normalized"],
             "status": "aligned",
         }
+        trace_word["status"] = "aligned"
+        trace_word["wav2vec2"] = item["wav2vec2"]
+        trace_entry["lexical_items"].append(trace_word)
+
+    return trace_entry, raw_output
 
 
 def _slice_audio(
@@ -278,6 +420,7 @@ def _apply_fallback(segment: dict[str, Any], reason: str, voice_range_id: str | 
         reason=reason,
         voice_range_id=voice_range_id,
     )
+    _promote_alignment_timings(segment)
 
 
 def _anchor_segment_punctuation(segment: dict[str, Any]) -> None:
@@ -308,6 +451,36 @@ def _anchor_segment_punctuation(segment: dict[str, Any]) -> None:
                 "end_ms": last_lexical_end_ms,
                 "status": "anchored_to_previous_word",
             }
+
+
+def _promote_alignment_timings(segment: dict[str, Any]) -> None:
+    """Expose aligned timings at segment/item level while keeping wav2vec2 data."""
+    _insert_timings_after_text(segment, segment["wav2vec2"]["start_ms"], segment["wav2vec2"]["end_ms"])
+    for item in segment.get("items", []):
+        wav2vec2 = item.get("wav2vec2")
+        if not wav2vec2:
+            continue
+        _insert_timings_after_text(item, wav2vec2["start_ms"], wav2vec2["end_ms"])
+
+
+def _insert_timings_after_text(payload: dict[str, Any], start_ms: int, end_ms: int) -> None:
+    """Insert start_ms/end_ms immediately after text, preserving other fields."""
+    items = list(payload.items())
+    rebuilt: dict[str, Any] = {}
+    inserted = False
+    for key, value in items:
+        if key in {"start_ms", "end_ms"}:
+            continue
+        rebuilt[key] = value
+        if key == "text":
+            rebuilt["start_ms"] = start_ms
+            rebuilt["end_ms"] = end_ms
+            inserted = True
+    if not inserted:
+        rebuilt["start_ms"] = start_ms
+        rebuilt["end_ms"] = end_ms
+    payload.clear()
+    payload.update(rebuilt)
 
 
 def _normalize_for_alignment(text: str) -> str:
@@ -368,21 +541,17 @@ def _build_segment_wav2vec2(
 
 def _save_raw_artifacts(
     writer: StepWriter,
-    model_info: dict[str, Any],
-    alignment_debug: list[dict[str, Any]],
+    raw_model_info: dict[str, Any],
+    alignment_trace: list[dict[str, Any]],
+    wav2vec2_raw_outputs: list[dict[str, Any]],
+    torch_output: str,
 ) -> None:
-    """Save raw alignment debug artifacts to 03_align.raw/."""
+    """Save only merged torch stdout for step 03 raw artifacts."""
+    del raw_model_info, alignment_trace, wav2vec2_raw_outputs
+
     raw_dir = writer.steps_dir / "03_align.raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-
-    (raw_dir / "model_info.json").write_text(
-        json.dumps(model_info, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    (raw_dir / "alignment_debug.json").write_text(
-        json.dumps(alignment_debug, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    (raw_dir / "stdout.txt").write_text(torch_output, encoding="utf-8")
 
 
 def _build_step(
@@ -407,26 +576,14 @@ def _build_step(
         "step": "03_align",
         "description": "wav2vec2 CTC forced alignment on the step-01 WAV using the step-02 transcript",
         "model": model_info,
-        "config": {
-            "alignment_unit": "one wav2vec2 pass per voice range",
-            "item_probability": "item.whisper.probability = mean(source token p)",
-            "alignment_text": "lowercase + accent stripping + punctuation removed, apostrophes kept",
-            "punctuation_policy": "preserve in items, exclude from acoustic target, anchor to previous lexical item",
-        },
         "input": {
             "wav_path": str(wav_path.resolve()),
             "transcription_step": transcription_step.get("step", "02_transcribe"),
             "language": transcription.get("whisper", {}).get("language", "unknown"),
-            "num_segments": len(transcription.get("segments", [])),
         },
         "result": {
-            "num_segments": len(segments),
-            "num_items": sum(len(segment.get("items", [])) for segment in segments),
             "num_aligned_items": len(aligned_items),
             "num_fallback_items": len(fallback_items),
-            "num_fallback_segments": sum(
-                1 for segment in segments if segment.get("wav2vec2", {}).get("status") == "fallback"
-            ),
         },
         "transcription": {
             **transcription,

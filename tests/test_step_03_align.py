@@ -8,6 +8,7 @@ from clotaire.step_03_align import (
     _build_segment_wav2vec2,
     _is_punctuation_word,
     _normalize_for_alignment,
+    _promote_alignment_timings,
 )
 
 
@@ -93,6 +94,33 @@ def test_build_segment_wav2vec2_uses_lexical_item_bounds() -> None:
     assert result["end_ms"] == 280
     assert result["status"] == "aligned"
     assert result["voice_range_id"] == "vr_0001"
+
+
+def test_promote_alignment_timings() -> None:
+    segment = {
+        "wav2vec2": {"start_ms": 120, "end_ms": 280, "status": "aligned"},
+        "items": [
+            {
+                "type": "word",
+                "text": "Bonjour",
+                "wav2vec2": {"start_ms": 120, "end_ms": 280, "status": "aligned"},
+            },
+            {
+                "type": "punctuation",
+                "text": "!",
+                "wav2vec2": {"start_ms": 280, "end_ms": 280, "status": "anchored_to_previous_word"},
+            },
+        ],
+    }
+
+    _promote_alignment_timings(segment)
+
+    assert segment["start_ms"] == 120
+    assert segment["end_ms"] == 280
+    assert segment["items"][0]["start_ms"] == 120
+    assert segment["items"][0]["end_ms"] == 280
+    assert segment["items"][1]["start_ms"] == 280
+    assert segment["items"][1]["end_ms"] == 280
 
 
 def test_anchor_segment_punctuation() -> None:
