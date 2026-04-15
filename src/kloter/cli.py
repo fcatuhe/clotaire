@@ -59,6 +59,11 @@ def main(argv: list[str] | None = None) -> None:
         default=3,
         help="Max wav2vec2 alignment models to load (memory limit)",
     )
+    parser.add_argument(
+        "--save-steps",
+        default=None,
+        help="Directory to save intermediate step outputs as numbered JSON files",
+    )
     args = parser.parse_args(argv)
 
     result = run(
@@ -67,6 +72,7 @@ def main(argv: list[str] | None = None) -> None:
         max_speakers=args.max_speakers,
         min_speakers=args.min_speakers,
         max_languages=args.max_languages,
+        save_steps=args.save_steps,
     )
 
     if args.stdout:
