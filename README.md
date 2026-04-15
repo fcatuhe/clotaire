@@ -1,6 +1,6 @@
 # Kloter
 
-Multilingual audio transcription with speaker diarization.
+Step-by-step audio transcription CLI.
 
 ## Install
 
@@ -11,15 +11,29 @@ uv sync --extra dev
 ## Usage
 
 ```bash
-kloter audio.mp3                        # → audio.transcription.json + audio.transcription.md
-kloter audio.mp3 --format json          # → audio.transcription.json only
-kloter audio.mp3 --format md            # → audio.transcription.md only
-kloter audio.mp3 --stdout               # → JSON on stdout (for piping / Ruby)
-kloter audio.mp3 --output-dir /tmp/out  # → /tmp/out/audio.transcription.*
+kloter /path/to/audio.mp3 --trace
 ```
+
+Saves numbered step files under `<audio_dir>/<audio_stem>/steps/`:
+
+```
+audio.mp3
+audio/
+  steps/
+    01_transcript.audio.json
+    02_vad.audio.json
+```
+
+## Steps
+
+| # | Name | Description |
+|---|------|-------------|
+| 01 | convert | Audio conversion: any format → 16kHz mono float32 |
+| 02 | vad | Voice Activity Detection (pyannote) with raw + padded output |
 
 ## Requirements
 
 - Python >= 3.10
-- ffmpeg (system)
-- HuggingFace token (for gated pyannote models): set `HF_TOKEN` env var or pass `--hf-token`
+- ffmpeg / ffprobe (system)
+- whisper-cli on PATH (whisper.cpp)
+- HuggingFace token: set `HF_TOKEN` env var

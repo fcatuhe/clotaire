@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kloter"
-version = "0.2.0"
-description = "Step-by-step audio transcription CLI"
+version = "0.1.0"
+description = "Multilingual audio transcription with speaker diarization"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 readme = "README.md"
@@ -14,6 +14,7 @@ dependencies = [
     "torch",
     "torchaudio",
     "pyannote.audio",
+    "whisperx",
     "numpy",
     "python-dotenv>=1.2.2",
     "huggingface-hub",
