@@ -15,9 +15,9 @@ def run(media_path: Path) -> None:
     writer = StepWriter(media_path)
 
     print("Step 01: convert …", flush=True)
-    audio = step_01(media_path, writer)
+    wav_path = step_01(media_path, writer)
 
     print("Step 02: vad …", flush=True)
-    step_02(audio, writer)
+    step_02(wav_path, writer)
 
     print("Done. Steps saved to:", writer.steps_dir, file=stderr)

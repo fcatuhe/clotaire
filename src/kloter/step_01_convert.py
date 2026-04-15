@@ -4,13 +4,12 @@ Extracts the audio stream from any media file (mp3, mp4, wav, ogg, etc.)
 and converts it to 16kHz mono PCM — the format required by all downstream
 tools in the pipeline:
 
-  - whisper.cpp: needs a WAV file (pcm_s16le)
-  - pyannote (VAD, diarization): needs float32 tensor, 16kHz mono, [-1,1]
-  - wav2vec2 (alignment): needs float32 numpy array, 16kHz mono
+  - whisper.cpp: reads the WAV file directly
+  - pyannote (VAD, diarization): loads via torchaudio → float32 tensor
+  - wav2vec2 (alignment): loads via torchaudio → float32 numpy
 
-The converted WAV is saved as a step artifact for whisper-cli to read
-directly. The numpy array (float32, normalized) is kept in memory for
-pyannote and wav2vec2.
+The converted WAV is saved as a step artifact. Downstream steps read from
+this file — no in-memory audio array passed between steps.
 
 Both original and converted metadata come from ffprobe — same schema,
 same code path, zero drift from ffmpeg naming.
@@ -22,8 +21,6 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from kloter.steps_io import StepWriter
 
@@ -54,62 +51,39 @@ _STREAM_KEYS = [
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
-def execute(media_path: Path, writer: StepWriter) -> np.ndarray:
+def execute(media_path: Path, writer: StepWriter) -> Path:
     """Run step 01 end to end.
 
     Probes the original media file, extracts and converts the audio stream
-    to 16kHz mono PCM, saves the WAV as a step artifact, probes the
-    converted file, writes the step JSON.
+    to a 16kHz mono WAV, probes the converted file, writes the step JSON.
 
-    Returns the audio array (float32, 16kHz mono) for downstream steps.
+    Returns the path to the converted WAV for downstream steps.
     """
     original_probe = _probe(media_path)
-    audio = _load_audio(media_path)
 
     wav_path = writer.artifact_path(1, "convert", ".wav")
-    _save_wav(audio, wav_path)
+    _convert_to_wav(media_path, wav_path)
 
     converted_probe = _probe(wav_path)
 
     step_data = _build_step(media_path, original_probe, wav_path, converted_probe)
     writer.save(1, "convert", step_data)
 
-    return audio
+    return wav_path
 
 
 # ── Audio conversion ────────────────────────────────────────────────────────
 
-# WAV header is 44 bytes = 22 int16 samples at 2 bytes each
-_WAV_HEADER_SAMPLES = 22
+def _convert_to_wav(media_path: Path, wav_path: Path) -> None:
+    """Extract audio stream and convert to 16kHz mono WAV.
 
-# PCM int16 range: [-32768, 32767], normalized to [-1.0, 1.0]
-_PCM_MAX = 32768.0
-_PCM_CLIP_MAX = 32767
-
-
-def _load_audio(path: str | Path) -> np.ndarray:
-    """Extract audio stream and convert to 16kHz mono float32 numpy array.
-
-    ffmpeg: any format → pcm_s16le 16kHz mono (raw bytes, -ac 1 -ar 16000)
-    numpy: int16 → float32 / _PCM_MAX to normalize to [-1, 1] for pyannote/wav2vec2.
+    A single ffmpeg call: any format → pcm_s16le 16kHz mono WAV file.
+    No intermediate numpy array, no round-trip.
     """
-    result = subprocess.run(
-        ["ffmpeg", "-i", str(path), "-f", "wav", "-acodec", "pcm_s16le",
-         "-ac", "1", "-ar", "16000", "-"],
-        capture_output=True,
-        check=True,
-    )
-    audio = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / _PCM_MAX
-    return audio[_WAV_HEADER_SAMPLES:]
-
-
-def _save_wav(audio: np.ndarray, path: Path) -> None:
-    """Write the converted audio as a WAV file for whisper-cli."""
-    pcm = (audio * _PCM_MAX).clip(-_PCM_MAX, _PCM_CLIP_MAX).astype(np.int16)
     subprocess.run(
-        ["ffmpeg", "-y", "-f", "s16le", "-ar", "16000", "-ac", "1",
-         "-i", "pipe:0", str(path)],
-        input=pcm.tobytes(),
+        ["ffmpeg", "-y", "-i", str(media_path),
+         "-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000",
+         str(wav_path)],
         capture_output=True,
         check=True,
     )
