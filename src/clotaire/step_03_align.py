@@ -40,10 +40,10 @@ def execute(
     t0 = time.perf_counter()
     waveform, sample_rate = _load_audio(wav_path)
 
-    torch_output = io.StringIO()
+    torchaudio_output = io.StringIO()
     alignment_trace: list[dict[str, Any]] = []
     wav2vec2_raw_outputs: list[dict[str, Any]] = []
-    with contextlib.redirect_stdout(torch_output), contextlib.redirect_stderr(torch_output):
+    with contextlib.redirect_stdout(torchaudio_output), contextlib.redirect_stderr(torchaudio_output):
         raw_model_info = _raw_model_info()
 
         transcription = transcription_step.get("transcription", {})
@@ -72,12 +72,10 @@ def execute(
         raw_model_info,
         alignment_trace,
         wav2vec2_raw_outputs,
-        torch_output.getvalue(),
+        torchaudio_output.getvalue(),
     )
 
     step_data = _build_step(
-        wav_path=wav_path,
-        transcription_step=transcription_step,
         transcription=transcription,
         model_info=model_info,
         segments=segments,
@@ -544,19 +542,17 @@ def _save_raw_artifacts(
     raw_model_info: dict[str, Any],
     alignment_trace: list[dict[str, Any]],
     wav2vec2_raw_outputs: list[dict[str, Any]],
-    torch_output: str,
+    torchaudio_output: str,
 ) -> None:
-    """Save only merged torch stdout for step 03 raw artifacts."""
+    """Save only merged torchaudio stdout for step 03 raw artifacts."""
     del raw_model_info, alignment_trace, wav2vec2_raw_outputs
 
     raw_dir = writer.steps_dir / "03_align.raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    (raw_dir / "stdout.txt").write_text(torch_output, encoding="utf-8")
+    (raw_dir / "torchaudio_stdout.txt").write_text(torchaudio_output, encoding="utf-8")
 
 
 def _build_step(
-    wav_path: Path,
-    transcription_step: dict[str, Any],
     transcription: dict[str, Any],
     model_info: dict[str, Any],
     segments: list[dict[str, Any]],
@@ -576,20 +572,15 @@ def _build_step(
         "step": "03_align",
         "description": "wav2vec2 CTC forced alignment on the step-01 WAV using the step-02 transcript",
         "model": model_info,
-        "input": {
-            "wav_path": str(wav_path.resolve()),
-            "transcription_step": transcription_step.get("step", "02_transcribe"),
-            "language": transcription.get("whisper", {}).get("language", "unknown"),
-        },
         "result": {
             "num_aligned_items": len(aligned_items),
             "num_fallback_items": len(fallback_items),
         },
+        "timing": {
+            "wall_s": round(wall_time_s, 2),
+        },
         "transcription": {
             **transcription,
             "segments": segments,
-        },
-        "timing": {
-            "wall_s": round(wall_time_s, 2),
         },
     }

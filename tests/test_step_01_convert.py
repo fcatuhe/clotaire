@@ -83,9 +83,10 @@ def test_build_step_matches_current_schema(tmp_path: Path) -> None:
         "streams": [{"codec_name": "pcm_s16le", "sample_rate": 16000, "channels": 1}],
     }
 
-    step = _build_step(media_path, original_probe, wav_path, converted_probe)
+    step = _build_step(media_path, original_probe, wav_path, converted_probe, wall_time_s=0.42)
 
     assert step["step"] == "01_convert"
     assert "downstream_requirements" not in step
     assert step["original"]["file"] == "input.mp3"
     assert step["converted"]["file"] == "01_convert.input.wav"
+    assert step["timing"]["wall_s"] == 0.42

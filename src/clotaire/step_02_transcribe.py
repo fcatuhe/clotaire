@@ -287,6 +287,7 @@ def _build_step(
             "num_items": num_items,
             "segments": _build_lines(segments),
         },
+        "timing": _build_timing(timings, wall_time_s),
         "transcription": {
             "whisper": {
                 "language": lang_info[0],
@@ -295,7 +296,6 @@ def _build_step(
             },
             "segments": segments,
         },
-        "timing": _build_timing(timings, wall_time_s),
     }
 
 

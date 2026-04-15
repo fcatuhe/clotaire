@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,7 @@ def execute(media_path: Path, writer: StepWriter) -> Path:
 
     Returns the path to the converted WAV for downstream steps.
     """
+    t0 = time.perf_counter()
     raw_dir = writer.steps_dir / "01_convert.raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -75,7 +77,13 @@ def execute(media_path: Path, writer: StepWriter) -> Path:
     _save_raw_ffprobe(raw_dir / "ffprobe_converted.json", converted_probe_raw)
     converted_probe = _filter_and_order(converted_probe_raw)
 
-    step_data = _build_step(media_path, original_probe, wav_path, converted_probe)
+    step_data = _build_step(
+        media_path,
+        original_probe,
+        wav_path,
+        converted_probe,
+        wall_time_s=time.perf_counter() - t0,
+    )
     writer.save(1, "convert", step_data)
 
     return wav_path
@@ -149,6 +157,7 @@ def _build_step(
     original_probe: dict[str, Any],
     wav_path: Path,
     converted_probe: dict[str, Any],
+    wall_time_s: float,
 ) -> dict[str, Any]:
     """Assemble the step-01 output dict from probed metadata."""
     return {
@@ -156,6 +165,9 @@ def _build_step(
         "description": "Audio extraction and conversion: any format → 16kHz mono PCM",
         "original": _build_file_entry(media_path, original_probe),
         "converted": _build_file_entry(wav_path, converted_probe),
+        "timing": {
+            "wall_s": round(wall_time_s, 2),
+        },
     }
 
 

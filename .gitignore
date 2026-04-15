@@ -38,4 +38,7 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Temporary files
+tmp/
+
 audio_samples/

@@ -9,6 +9,7 @@ from clotaire.steps_io import StepWriter
 from clotaire.step_01_convert import execute as step_01
 from clotaire.step_02_transcribe import execute as step_02
 from clotaire.step_03_align import execute as step_03
+from clotaire.step_04_diarize import execute as step_04
 
 
 def run(media_path: Path) -> None:
@@ -23,5 +24,8 @@ def run(media_path: Path) -> None:
 
     print("Step 03: align …", flush=True)
     step_03(wav_path, transcribe_data, writer)
+
+    print("Step 04: diarize …", flush=True)
+    step_04(wav_path, writer)
 
     print("Done. Steps saved to:", writer.steps_dir, file=stderr)
