@@ -68,8 +68,8 @@ def execute(media_path: Path, writer: StepWriter) -> Path:
     original_probe = _filter_and_order(original_probe_raw)
 
     wav_path = writer.artifact_path(1, "convert", ".wav")
-    ffmpeg_stderr = _convert_to_wav(media_path, wav_path)
-    (raw_dir / "ffmpeg_stderr.txt").write_text(ffmpeg_stderr, encoding="utf-8")
+    ffmpeg_output = _convert_to_wav(media_path, wav_path)
+    (raw_dir / "ffmpeg_stdout.txt").write_text(ffmpeg_output, encoding="utf-8")
 
     converted_probe_raw = _probe_raw(wav_path)
     _save_raw_ffprobe(raw_dir / "ffprobe_converted.json", converted_probe_raw)
@@ -89,17 +89,19 @@ def _convert_to_wav(media_path: Path, wav_path: Path) -> str:
     A single ffmpeg call: any format → pcm_s16le 16kHz mono WAV file.
     No intermediate numpy array, no round-trip.
 
-    Returns ffmpeg stderr for raw artifact preservation.
+    Returns combined process output captured on stdout for raw artifact
+    preservation.
     """
     result = subprocess.run(
         ["ffmpeg", "-y", "-i", str(media_path),
          "-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000",
          str(wav_path)],
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         check=True,
     )
-    return result.stderr
+    return result.stdout
 
 
 # ── ffprobe ─────────────────────────────────────────────────────────────────

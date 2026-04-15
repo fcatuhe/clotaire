@@ -22,6 +22,7 @@ audio/
   steps/
     01_convert.audio.json
     02_transcribe.audio.json
+    03_align.audio.json
 ```
 
 ## Steps
@@ -30,6 +31,7 @@ audio/
 |---|------|-------------|
 | 01 | convert | Audio conversion: any format → 16kHz mono WAV |
 | 02 | transcribe | whisper.cpp transcription with built-in Silero VAD |
+| 03 | align | wav2vec2 forced alignment on the canonical WAV |
 
 ## Requirements
 

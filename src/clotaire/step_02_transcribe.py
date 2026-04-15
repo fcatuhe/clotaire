@@ -76,18 +76,18 @@ def execute(wav_path: Path, writer: StepWriter) -> dict[str, Any]:
     Returns the step data dict for downstream steps.
     """
     t0 = time.perf_counter()
-    whisper_json, stderr_text = _run_whisper(wav_path)
+    whisper_json, output_text = _run_whisper(wav_path)
     elapsed = time.perf_counter() - t0
 
-    _save_raw_artifacts(writer, whisper_json, stderr_text)
+    _save_raw_artifacts(writer, whisper_json, output_text)
 
-    voice_ranges = _parse_voice_ranges(stderr_text)
-    timings = _parse_timings(stderr_text)
-    audio_duration_ms = _parse_audio_duration(stderr_text)
-    lang_info = _parse_language(stderr_text)
+    voice_ranges = _parse_voice_ranges(output_text)
+    timings = _parse_timings(output_text)
+    audio_duration_ms = _parse_audio_duration(output_text)
+    lang_info = _parse_language(output_text)
 
     step_data = _build_step(
-        whisper_json, stderr_text, voice_ranges, timings,
+        whisper_json, output_text, voice_ranges, timings,
         audio_duration_ms, lang_info, elapsed,
     )
     path = writer.save(2, "transcribe", step_data)
@@ -104,7 +104,7 @@ def execute(wav_path: Path, writer: StepWriter) -> dict[str, Any]:
 def _run_whisper(wav_path: Path) -> tuple[dict[str, Any], str]:
     """Run whisper-cli with VAD and full JSON output.
 
-    Returns (parsed_json, stderr_text).
+    Returns (parsed_json, combined_output_text).
     """
     cmd = [
         "whisper-cli",
@@ -122,7 +122,11 @@ def _run_whisper(wav_path: Path) -> tuple[dict[str, Any], str]:
     ]
 
     result = subprocess.run(
-        cmd, capture_output=True, text=True, check=True,
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=True,
     )
 
     json_path = Path(str(wav_path) + ".json")
@@ -135,7 +139,7 @@ def _run_whisper(wav_path: Path) -> tuple[dict[str, Any], str]:
 
     json_path.unlink()
 
-    return whisper_data, result.stderr
+    return whisper_data, result.stdout
 
 
 def _resolve_model(name: str) -> Path:
@@ -165,7 +169,7 @@ def _resolve_model(name: str) -> Path:
 def _save_raw_artifacts(
     writer: StepWriter,
     whisper_json: dict[str, Any],
-    stderr_text: str,
+    output_text: str,
 ) -> None:
     """Save raw whisper-cli outputs to 02_transcribe.raw/ subfolder."""
     raw_dir = writer.steps_dir / "02_transcribe.raw"
@@ -175,7 +179,7 @@ def _save_raw_artifacts(
         json.dumps(whisper_json, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    (raw_dir / "whisper_stderr.txt").write_text(stderr_text, encoding="utf-8")
+    (raw_dir / "whisper_stdout.txt").write_text(output_text, encoding="utf-8")
 
 
 # ── Stderr parsing ──────────────────────────────────────────────────────────
@@ -268,7 +272,9 @@ def _build_step(
     wall_time_s: float,
 ) -> dict[str, Any]:
     """Assemble the step-02 output dict from whisper output + parsed metadata."""
-    segments = _build_transcription(whisper_json)
+    voice_ranges = _build_voice_ranges(voice_ranges)
+    segments = _build_transcription(whisper_json, voice_ranges)
+    num_items = sum(len(seg["items"]) for seg in segments)
 
     return {
         "step": "02_transcribe",
@@ -277,12 +283,18 @@ def _build_step(
         "config": _build_config(),
         "vad": _build_vad(voice_ranges, audio_duration_ms),
         "result": {
-            "language": lang_info[0],
-            "language_confidence": lang_info[1],
             "num_segments": len(segments),
+            "num_items": num_items,
             "segments": _build_lines(segments),
         },
-        "transcription": segments,
+        "transcription": {
+            "whisper": {
+                "language": lang_info[0],
+                "probability": lang_info[1],
+                "voice_ranges": voice_ranges,
+            },
+            "segments": segments,
+        },
         "timing": _build_timing(timings, wall_time_s),
     }
 
@@ -323,7 +335,7 @@ def _build_config() -> dict[str, Any]:
 
 
 def _build_vad(
-    voice_ranges: list[dict[str, int]],
+    voice_ranges: list[dict[str, Any]],
     audio_duration_ms: int,
 ) -> dict[str, Any]:
     """Build the VAD section from parsed voice ranges."""
@@ -343,8 +355,8 @@ def _build_lines(segments: list[dict[str, Any]]) -> list[str]:
     """Build readable lines mirroring whisper-cli stdout."""
     lines = []
     for seg in segments:
-        start = _ms_to_timestamp(seg["start_ms"])
-        end = _ms_to_timestamp(seg["end_ms"])
+        start = _ms_to_timestamp(seg["whisper"]["start_ms"])
+        end = _ms_to_timestamp(seg["whisper"]["end_ms"])
         lines.append(f"[{start} --> {end}]   {seg['text']}")
     return lines
 
@@ -358,15 +370,13 @@ def _ms_to_timestamp(ms: int) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
-def _build_transcription(whisper_json: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert whisper JSON transcription to our segment schema.
-
-    Each segment has: start_ms, end_ms, text, tokens[]
-    Each token has: text, start_ms, end_ms, p (probability)
-    Special tokens (like [_BEG_], [_TT_*]) are filtered out.
-    """
+def _build_transcription(
+    whisper_json: dict[str, Any],
+    voice_ranges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert whisper JSON transcription to normalized segments/items schema."""
     segments = []
-    for entry in whisper_json.get("transcription", []):
+    for seg_index, entry in enumerate(whisper_json.get("transcription", []), start=1):
         offsets = entry.get("offsets", {})
         tokens = []
         for tok in entry.get("tokens", []):
@@ -380,13 +390,112 @@ def _build_transcription(whisper_json: dict[str, Any]) -> list[dict[str, Any]]:
                 "end_ms": tok_offsets.get("to", 0),
                 "p": round(tok.get("p", 0.0), 4),
             })
+        items = _build_items(tokens, seg_index)
+        probability, probability_min = _probability_stats([tok["p"] for tok in tokens])
+        segment_start_ms = offsets.get("from", 0)
         segments.append({
-            "start_ms": offsets.get("from", 0),
-            "end_ms": offsets.get("to", 0),
+            "id": f"seg_{seg_index:04d}",
+            "voice_range_id": _assign_voice_range_id(segment_start_ms, voice_ranges),
             "text": entry.get("text", "").strip(),
-            "tokens": tokens,
+            "items": items,
+            "whisper": {
+                "start_ms": segment_start_ms,
+                "end_ms": offsets.get("to", 0),
+                "probability": probability,
+                "probability_min": probability_min,
+                "num_tokens": len(tokens),
+            },
         })
     return segments
+
+
+def _build_items(tokens: list[dict[str, Any]], seg_index: int) -> list[dict[str, Any]]:
+    """Group whisper tokens into segment items (words and punctuation)."""
+    items: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] = []
+    current_text = ""
+
+    def flush() -> None:
+        nonlocal current, current_text
+        if not current:
+            return
+        item_index = len(items) + 1
+        probability, probability_min = _probability_stats([tok["p"] for tok in current])
+        items.append({
+            "id": f"seg_{seg_index:04d}_item_{item_index:04d}",
+            "type": "punctuation" if _is_punctuation_only(current_text) else "word",
+            "text": current_text,
+            "whisper": {
+                "start_ms": current[0]["start_ms"],
+                "end_ms": current[-1]["end_ms"],
+                "probability": probability,
+                "probability_min": probability_min,
+                "tokens": current,
+            },
+        })
+        current = []
+        current_text = ""
+
+    for tok in tokens:
+        raw_text = tok.get("text", "")
+        piece = raw_text.lstrip()
+        if not piece:
+            continue
+
+        if _is_punctuation_only(piece):
+            flush()
+            current.append(tok)
+            current_text = piece
+            flush()
+            continue
+
+        starts_new_item = bool(current) and raw_text[:1].isspace()
+        if starts_new_item:
+            flush()
+
+        current.append(tok)
+        current_text += piece
+
+    flush()
+    return items
+
+
+def _build_voice_ranges(voice_ranges: list[dict[str, int]]) -> list[dict[str, Any]]:
+    """Attach stable ids to parsed VAD voice ranges."""
+    return [
+        {"id": f"vr_{index:04d}", **voice_range}
+        for index, voice_range in enumerate(voice_ranges, start=1)
+    ]
+
+
+def _assign_voice_range_id(
+    segment_start_ms: int,
+    voice_ranges: list[dict[str, Any]],
+) -> str | None:
+    """Assign a segment to the voice range containing its start time."""
+    for voice_range in voice_ranges:
+        if voice_range["start_ms"] <= segment_start_ms <= voice_range["end_ms"]:
+            return voice_range["id"]
+    return None
+
+
+def _probability_stats(values: list[float]) -> tuple[float | None, float | None]:
+    """Return (mean, min) probability for a sequence of values."""
+    if not values:
+        return None, None
+    return round(sum(values) / len(values), 4), round(min(values), 4)
+
+
+def _is_punctuation_only(text: str) -> bool:
+    """Return True when text contains no letters or digits.
+
+    A bare apostrophe is treated as lexical glue, not punctuation, so that
+    contractions like ``J'`` + ``ai`` stay lexical.
+    """
+    stripped = text.strip()
+    if stripped == "'":
+        return False
+    return bool(stripped) and re.fullmatch(r"[^\w]+", stripped, flags=re.UNICODE) is not None
 
 
 def _build_timing(timings: dict[str, float], wall_time_s: float) -> dict[str, Any]:
@@ -398,7 +507,7 @@ def _build_timing(timings: dict[str, float], wall_time_s: float) -> dict[str, An
 
 
 def _compact_voice_ranges_in_json(text: str) -> str:
-    """Render vad.voice_ranges entries on single lines in saved JSON."""
+    """Render voice_ranges entries on single lines in saved JSON."""
     lines = text.splitlines()
     out: list[str] = []
     in_voice_ranges = False
@@ -426,15 +535,17 @@ def _compact_voice_ranges_in_json(text: str) -> str:
                 l1 = lines[i + 1].strip()
                 l2 = lines[i + 2].strip()
                 l3 = lines[i + 3].strip()
-                m1 = re.match(r'"start_ms":\s*(\d+),', l1)
-                m2 = re.match(r'"end_ms":\s*(\d+)', l2)
-                if m1 and m2 and l3 in {'}', '},'}:
+                l4 = lines[i + 4].strip() if i + 4 < len(lines) else ''
+                m0 = re.match(r'"id":\s*"([^"]+)",', l1)
+                m1 = re.match(r'"start_ms":\s*(\d+),', l2)
+                m2 = re.match(r'"end_ms":\s*(\d+)', l3)
+                if m0 and m1 and m2 and l4 in {'}', '},'}:
                     indent = line[: len(line) - len(line.lstrip())]
-                    trailing = ',' if l3.endswith(',') else ''
+                    trailing = ',' if l4.endswith(',') else ''
                     out.append(
-                        f'{indent}{{ "start_ms": {m1.group(1)}, "end_ms": {m2.group(1)} }}{trailing}'
+                        f'{indent}{{ "id": "{m0.group(1)}", "start_ms": {m1.group(1)}, "end_ms": {m2.group(1)} }}{trailing}'
                     )
-                    i += 4
+                    i += 5
                     continue
 
         out.append(line)
