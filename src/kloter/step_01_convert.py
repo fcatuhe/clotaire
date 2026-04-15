@@ -54,23 +54,24 @@ _STREAM_KEYS = [
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
-def execute(audio_path: Path, writer: StepWriter) -> np.ndarray:
+def execute(media_path: Path, writer: StepWriter) -> np.ndarray:
     """Run step 01 end to end.
 
-    Probes the original file, converts to 16kHz mono PCM, saves the WAV
-    as a step artifact, probes the converted file, writes the step JSON.
+    Probes the original media file, extracts and converts the audio stream
+    to 16kHz mono PCM, saves the WAV as a step artifact, probes the
+    converted file, writes the step JSON.
 
     Returns the audio array (float32, 16kHz mono) for downstream steps.
     """
-    original_probe = _probe(audio_path)
-    audio = _load_audio(audio_path)
+    original_probe = _probe(media_path)
+    audio = _load_audio(media_path)
 
     wav_path = writer.artifact_path(1, "convert", ".wav")
     _save_wav(audio, wav_path)
 
     converted_probe = _probe(wav_path)
 
-    step_data = _build_step(audio_path, original_probe, wav_path, converted_probe)
+    step_data = _build_step(media_path, original_probe, wav_path, converted_probe)
     writer.save(1, "convert", step_data)
 
     return audio
@@ -141,7 +142,7 @@ def _pick_keys(d: dict, keys: list[str]) -> dict:
 # ── Step output assembly ────────────────────────────────────────────────────
 
 def _build_step(
-    audio_path: Path,
+    media_path: Path,
     original_probe: dict[str, Any],
     wav_path: Path,
     converted_probe: dict[str, Any],
@@ -151,7 +152,7 @@ def _build_step(
         "step": "01_convert",
         "description": "Audio conversion: any format → 16kHz mono PCM",
         "downstream_requirements": _build_downstream_requirements(),
-        "original": _build_file_entry(audio_path, original_probe),
+        "original": _build_file_entry(media_path, original_probe),
         "converted": _build_file_entry(wav_path, converted_probe),
     }
 

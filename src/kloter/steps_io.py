@@ -16,9 +16,9 @@ class StepWriter:
         02_vad.<stem>.json
     """
 
-    def __init__(self, audio_path: Path) -> None:
-        self._stem = audio_path.stem
-        self._steps_dir = audio_path.parent / self._stem / "steps"
+    def __init__(self, media_path: Path) -> None:
+        self._stem = media_path.stem
+        self._steps_dir = media_path.parent / self._stem / "steps"
         self._steps_dir.mkdir(parents=True, exist_ok=True)
 
     def artifact_path(self, number: int, name: str, suffix: str) -> Path:
