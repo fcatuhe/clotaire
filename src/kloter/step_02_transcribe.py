@@ -9,8 +9,7 @@ Reads audio from the WAV artifact produced by step 01.
 Saves a rich step file with model info, VAD config, voice ranges,
 and full transcription with token-level detail.
 
-Raw whisper-cli outputs (JSON + stderr) are preserved in a
-<steps_dir>/02_transcribe.raw/ subfolder for debugging/replay.
+Raw whisper-cli outputs are preserved under 02_transcribe.raw/.
 """
 
 from __future__ import annotations
@@ -35,49 +34,19 @@ _VAD_SPEECH_PAD_MS = 100
 _VAD_SAMPLES_OVERLAP = 0.0
 _LANGUAGE = "auto"
 
-# ── Regex patterns for stderr parsing ────────────────────────────────────────
+# ── Regexes ─────────────────────────────────────────────────────────────────
 
-# VAD segment: "VAD segment 0: start = 0.00, end = 10.15 (duration: 10.15)"
-_RE_VAD_SEGMENT = re.compile(
-    r"VAD segment \d+: start = ([\d.]+), end = ([\d.]+)"
-)
+_RE_VAD_SEGMENT = re.compile(r"VAD segment \d+: start = ([\d.]+), end = ([\d.]+)")
+_RE_TIMING = re.compile(r"whisper_print_timings:\s+(\w[\w ]*?)\s*=\s*([\d.]+)\s+ms")
+_RE_LANGUAGE = re.compile(r"auto-detected language: (\w+) \(p = ([\d.]+)\)")
+_RE_MODEL_TYPE = re.compile(r"type\s*=\s*\d+\s+\((.+?)\)")
+_RE_VAD_TYPE = re.compile(r"whisper_vad_init_with_params: model type: (.+)")
+_RE_VAD_VERSION = re.compile(r"whisper_vad_init_with_params: model version: (.+)")
+_RE_FTYPE = re.compile(r"ftype\s*=\s*(\d+)")
+_RE_QNTVR = re.compile(r"qntvr\s*=\s*(\d+)")
+_RE_AUDIO_DURATION = re.compile(r"(\d+\.\d+)\s+sec\)")
 
-# Timing: "whisper_print_timings:   encode time = 90453.16 ms /     2 runs"
-_RE_TIMING = re.compile(
-    r"whisper_print_timings:\s+(\w[\w ]*?)\s*=\s*([\d.]+)\s+ms"
-)
-
-# Language: "auto-detected language: fr (p = 0.971764)"
-_RE_LANGUAGE = re.compile(
-    r"auto-detected language: (\w+) \(p = ([\d.]+)\)"
-)
-
-# Model loading path: "loading model from '/path/to/ggml-large-v3.bin'"
-_RE_MODEL_PATH = re.compile(
-    r"loading model from '(.+)'"
-)
-
-# Model type: "type = 5 (large v3)"
-_RE_MODEL_TYPE = re.compile(
-    r"type\s*=\s*\d+\s+\((.+?)\)"
-)
-
-# ftype: "ftype = 1"
-_RE_FTYPE = re.compile(
-    r"ftype\s*=\s*(\d+)"
-)
-
-# qntvr: "qntvr = 0"
-_RE_QNTVR = re.compile(
-    r"qntvr\s*=\s*(\d+)"
-)
-
-# Audio duration: "(428408 samples, 26.8 sec)"
-_RE_AUDIO_DURATION = re.compile(
-    r"(\d+\.\d+)\s+sec\)"
-)
-
-# ── ftype / qntvr lookup tables ──────────────────────────────────────────────
+# ── Lookups ─────────────────────────────────────────────────────────────────
 
 _FTYPE_NAMES = {
     0: "Q4_0",
@@ -95,20 +64,14 @@ _QNTVR_NAMES = {
     1: "quantized",
 }
 
-_CONTAINER_NAMES = {
-    ".bin": "ggml",
-    ".gguf": "gguf",
-}
-
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
 def execute(wav_path: Path, writer: StepWriter) -> dict[str, Any]:
     """Run step 02 end to end.
 
-    Runs whisper-cli with VAD on the step-01 WAV artifact, parses the
-    JSON output + stderr metadata, builds and saves the step file.
-    Preserves raw whisper outputs in 02_transcribe.raw/ subfolder.
+    Runs whisper-cli on the step-01 WAV artifact, builds the step file,
+    saves it, and preserves raw tool outputs.
 
     Returns the step data dict for downstream steps.
     """
@@ -116,7 +79,6 @@ def execute(wav_path: Path, writer: StepWriter) -> dict[str, Any]:
     whisper_json, stderr_text = _run_whisper(wav_path)
     elapsed = time.perf_counter() - t0
 
-    # Save raw artifacts for debugging / replay
     _save_raw_artifacts(writer, whisper_json, stderr_text)
 
     voice_ranges = _parse_voice_ranges(stderr_text)
@@ -128,12 +90,16 @@ def execute(wav_path: Path, writer: StepWriter) -> dict[str, Any]:
         whisper_json, stderr_text, voice_ranges, timings,
         audio_duration_ms, lang_info, elapsed,
     )
-    writer.save(2, "transcribe", step_data)
+    path = writer.save(2, "transcribe", step_data)
+    path.write_text(
+        _compact_voice_ranges_in_json(path.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
 
     return step_data
 
 
-# ── Whisper invocation ─────────────────────────────────────────────────────
+# ── Whisper invocation ──────────────────────────────────────────────────────
 
 def _run_whisper(wav_path: Path) -> tuple[dict[str, Any], str]:
     """Run whisper-cli with VAD and full JSON output.
@@ -159,7 +125,6 @@ def _run_whisper(wav_path: Path) -> tuple[dict[str, Any], str]:
         cmd, capture_output=True, text=True, check=True,
     )
 
-    # whisper-cli writes JSON to a file next to the input: <wav>.json
     json_path = Path(str(wav_path) + ".json")
     if not json_path.exists():
         raise FileNotFoundError(
@@ -168,7 +133,6 @@ def _run_whisper(wav_path: Path) -> tuple[dict[str, Any], str]:
 
     whisper_data = json.loads(json_path.read_text(encoding="utf-8"))
 
-    # Clean up the sidecar JSON — consumed into raw artifacts + step file
     json_path.unlink()
 
     return whisper_data, result.stderr
@@ -187,7 +151,6 @@ def _resolve_model(name: str) -> Path:
         if p.exists():
             return p.resolve()
 
-    # Fall back to HuggingFace cache for whisper models
     hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
     for snap in sorted(hf_cache.glob("models--ggerganov--whisper.cpp/snapshots/*/")):
         p = snap / name
@@ -215,7 +178,7 @@ def _save_raw_artifacts(
     (raw_dir / "whisper_stderr.txt").write_text(stderr_text, encoding="utf-8")
 
 
-# ── Stderr parsing ─────────────────────────────────────────────────────────
+# ── Stderr parsing ──────────────────────────────────────────────────────────
 
 def _parse_voice_ranges(stderr: str) -> list[dict[str, int]]:
     """Extract VAD voice ranges from whisper-cli stderr.
@@ -263,12 +226,6 @@ def _parse_audio_duration(stderr: str) -> int:
     return 0
 
 
-def _parse_model_path(stderr: str) -> str:
-    """Extract whisper model path from stderr."""
-    m = _RE_MODEL_PATH.search(stderr)
-    return m.group(1) if m else "unknown"
-
-
 def _parse_whisper_version(stderr: str) -> str:
     """Extract whisper model version name (e.g. 'large v3') from stderr."""
     m = _RE_MODEL_TYPE.search(stderr)
@@ -285,6 +242,18 @@ def _parse_qntvr(stderr: str) -> int:
     """Extract qntvr from stderr (0=none, 1=quantized)."""
     m = _RE_QNTVR.search(stderr)
     return int(m.group(1)) if m else -1
+
+
+def _parse_vad_type(stderr: str) -> str:
+    """Extract VAD model type from stderr."""
+    m = _RE_VAD_TYPE.search(stderr)
+    return m.group(1).strip() if m else "unknown"
+
+
+def _parse_vad_version(stderr: str) -> str:
+    """Extract VAD model version from stderr."""
+    m = _RE_VAD_VERSION.search(stderr)
+    return m.group(1).strip() if m else "unknown"
 
 
 # ── Step output assembly ────────────────────────────────────────────────────
@@ -311,9 +280,8 @@ def _build_step(
             "language": lang_info[0],
             "language_confidence": lang_info[1],
             "num_segments": len(segments),
-            "full_text": " ".join(s["text"].strip() for s in segments),
+            "segments": _build_lines(segments),
         },
-        "lines": _build_lines(segments),
         "transcription": segments,
         "timing": _build_timing(timings, wall_time_s),
     }
@@ -323,29 +291,21 @@ def _build_model_info(whisper_json: dict[str, Any], stderr: str) -> dict[str, An
     """Extract model metadata from whisper JSON + stderr."""
     model = whisper_json.get("model", {})
 
-    # Parse whisper version from stderr: "type = 5 (large v3)"
-    version = _parse_whisper_version(stderr)
-
-    # Parse quantization from stderr
-    ftype_id = _parse_ftype(stderr)
-    qntvr_id = _parse_qntvr(stderr)
-
-    # Determine container format from model path
-    model_path = _parse_model_path(stderr)
-    suffix = Path(model_path).suffix if model_path != "unknown" else ""
-    container = _CONTAINER_NAMES.get(suffix, suffix.lstrip(".") or "unknown")
+    ftype = _parse_ftype(stderr)
+    qntvr = _parse_qntvr(stderr)
 
     return {
         "whisper": {
-            "version": version,
+            "version": _parse_whisper_version(stderr),
             "multilingual": model.get("multilingual", False),
-            "container": container,
-            "ftype": _FTYPE_NAMES.get(ftype_id, f"unknown({ftype_id})"),
-            "quantization": _QNTVR_NAMES.get(qntvr_id, f"unknown({qntvr_id})"),
+            "ftype": ftype,
+            "ftype_name": _FTYPE_NAMES.get(ftype, f"unknown({ftype})"),
+            "qntvr": qntvr,
+            "qntvr_name": _QNTVR_NAMES.get(qntvr, f"unknown({qntvr})"),
         },
         "vad": {
-            "type": "silero",
-            "version": _VAD_MODEL.replace("ggml-silero-", "").replace(".bin", ""),
+            "type": _parse_vad_type(stderr),
+            "version": _parse_vad_version(stderr),
         },
     }
 
@@ -380,11 +340,7 @@ def _build_vad(
 
 
 def _build_lines(segments: list[dict[str, Any]]) -> list[str]:
-    """Build the lines section — one readable line per segment.
-
-    Format mirrors whisper-cli stdout:
-      [00:00:00.000 --> 00:00:02.260]   Si, vous faites une photo de quoi là ?
-    """
+    """Build readable lines mirroring whisper-cli stdout."""
     lines = []
     for seg in segments:
         start = _ms_to_timestamp(seg["start_ms"])
@@ -415,7 +371,6 @@ def _build_transcription(whisper_json: dict[str, Any]) -> list[dict[str, Any]]:
         tokens = []
         for tok in entry.get("tokens", []):
             text = tok.get("text", "")
-            # Skip special tokens (e.g. [_BEG_], [_TT_113])
             if text.startswith("[_") and text.endswith("]"):
                 continue
             tok_offsets = tok.get("offsets", {})
@@ -440,3 +395,49 @@ def _build_timing(timings: dict[str, float], wall_time_s: float) -> dict[str, An
         **timings,
         "wall_s": round(wall_time_s, 2),
     }
+
+
+def _compact_voice_ranges_in_json(text: str) -> str:
+    """Render vad.voice_ranges entries on single lines in saved JSON."""
+    lines = text.splitlines()
+    out: list[str] = []
+    in_voice_ranges = False
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        if '"voice_ranges": [' in line:
+            in_voice_ranges = True
+            out.append(line)
+            i += 1
+            continue
+
+        if in_voice_ranges:
+            stripped = line.strip()
+
+            if stripped == ']':
+                in_voice_ranges = False
+                out.append(line)
+                i += 1
+                continue
+
+            if stripped == '{' and i + 3 < len(lines):
+                l1 = lines[i + 1].strip()
+                l2 = lines[i + 2].strip()
+                l3 = lines[i + 3].strip()
+                m1 = re.match(r'"start_ms":\s*(\d+),', l1)
+                m2 = re.match(r'"end_ms":\s*(\d+)', l2)
+                if m1 and m2 and l3 in {'}', '},'}:
+                    indent = line[: len(line) - len(line.lstrip())]
+                    trailing = ',' if l3.endswith(',') else ''
+                    out.append(
+                        f'{indent}{{ "start_ms": {m1.group(1)}, "end_ms": {m2.group(1)} }}{trailing}'
+                    )
+                    i += 4
+                    continue
+
+        out.append(line)
+        i += 1
+
+    return "\n".join(out) + "\n"

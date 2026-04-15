@@ -55,16 +55,25 @@ def execute(media_path: Path, writer: StepWriter) -> Path:
     """Run step 01 end to end.
 
     Probes the original media file, extracts and converts the audio stream
-    to a 16kHz mono WAV, probes the converted file, writes the step JSON.
+    to a 16kHz mono WAV, probes the converted file, writes the step JSON,
+    and preserves raw tool outputs under 01_convert.raw/.
 
     Returns the path to the converted WAV for downstream steps.
     """
-    original_probe = _probe(media_path)
+    raw_dir = writer.steps_dir / "01_convert.raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    original_probe_raw = _probe_raw(media_path)
+    _save_raw_ffprobe(raw_dir / "ffprobe_original.json", original_probe_raw)
+    original_probe = _filter_and_order(original_probe_raw)
 
     wav_path = writer.artifact_path(1, "convert", ".wav")
-    _convert_to_wav(media_path, wav_path)
+    ffmpeg_stderr = _convert_to_wav(media_path, wav_path)
+    (raw_dir / "ffmpeg_stderr.txt").write_text(ffmpeg_stderr, encoding="utf-8")
 
-    converted_probe = _probe(wav_path)
+    converted_probe_raw = _probe_raw(wav_path)
+    _save_raw_ffprobe(raw_dir / "ffprobe_converted.json", converted_probe_raw)
+    converted_probe = _filter_and_order(converted_probe_raw)
 
     step_data = _build_step(media_path, original_probe, wav_path, converted_probe)
     writer.save(1, "convert", step_data)
@@ -74,37 +83,48 @@ def execute(media_path: Path, writer: StepWriter) -> Path:
 
 # ── Audio conversion ────────────────────────────────────────────────────────
 
-def _convert_to_wav(media_path: Path, wav_path: Path) -> None:
+def _convert_to_wav(media_path: Path, wav_path: Path) -> str:
     """Extract audio stream and convert to 16kHz mono WAV.
 
     A single ffmpeg call: any format → pcm_s16le 16kHz mono WAV file.
     No intermediate numpy array, no round-trip.
+
+    Returns ffmpeg stderr for raw artifact preservation.
     """
-    subprocess.run(
+    result = subprocess.run(
         ["ffmpeg", "-y", "-i", str(media_path),
          "-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000",
          str(wav_path)],
         capture_output=True,
+        text=True,
         check=True,
     )
+    return result.stderr
 
 
 # ── ffprobe ─────────────────────────────────────────────────────────────────
 
 def _probe(path: str | Path) -> dict[str, Any]:
-    """Probe a media file with ffprobe, returning filtered+ordered metadata.
+    """Probe a media file with ffprobe, returning filtered+ordered metadata."""
+    return _filter_and_order(_probe_raw(path))
 
-    Runs ffprobe -show_format -show_streams, keeps only the keys listed in
-    _FORMAT_KEYS and _STREAM_KEYS, orders them for readability, and converts
-    numeric strings to native types (except under "tags" which stays as strings).
-    """
+
+def _probe_raw(path: str | Path) -> dict[str, Any]:
+    """Probe a media file with ffprobe, returning full parsed JSON."""
     cmd = [
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_format", "-show_streams", str(path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    raw = _parse_ffprobe_json(result.stdout)
-    return _filter_and_order(raw)
+    return _parse_ffprobe_json(result.stdout)
+
+
+def _save_raw_ffprobe(path: Path, data: dict[str, Any]) -> None:
+    """Save raw ffprobe JSON as a pretty-printed artifact."""
+    path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _filter_and_order(raw: dict[str, Any]) -> dict[str, Any]:

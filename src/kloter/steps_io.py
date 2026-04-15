@@ -13,7 +13,7 @@ class StepWriter:
 
     Each step file is named like:
         01_convert.<stem>.json
-        02_vad.<stem>.json
+        02_transcribe.<stem>.json
     """
 
     def __init__(self, media_path: Path) -> None:
